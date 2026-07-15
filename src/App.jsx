@@ -5,30 +5,21 @@ import {
   Zap, ZapOff, Scan, History, LayoutGrid, Info, Search
 } from 'lucide-react';
 
+// Mengambil API Key secara langsung agar dibaca sempurna oleh compiler Vite/Vercel
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+
 const App = () => {
   const [step, setStep] = useState('home'); // home, preview, analyzing, result
   const [imageSource, setImageSource] = useState(null); // base64 image
   const [analysisResult, setAnalysisResult] = useState(null);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [cameraError, setCameraError] = useState(null);
+  const [appError, setAppError] = useState(null); // Pengganti alert()
   
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
-
-  // Mengambil API Key secara aman dengan evaluasi dinamis untuk menghindari error kompilasi ES2015
-  const getApiKey = () => {
-    try {
-      // Menggunakan evaluasi fungsi dinamis agar bundler tidak mendeteksi import.meta secara statis
-      const env = new Function("return import.meta.env")();
-      return env.VITE_GEMINI_API_KEY || "";
-    } catch (e) {
-      return "";
-    }
-  };
-
-  const apiKey = getApiKey();
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -44,6 +35,7 @@ const App = () => {
 
   const openCamera = async () => {
     setCameraError(null);
+    setAppError(null);
     setStep('camera');
     setTimeout(async () => {
       try {
@@ -73,6 +65,7 @@ const App = () => {
   };
 
   const handleGallery = (e) => {
+    setAppError(null);
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
@@ -86,12 +79,13 @@ const App = () => {
 
   const startAnalysis = async () => {
     if (!apiKey) {
-      alert("API Key belum dikonfigurasi. Harap masukkan VITE_GEMINI_API_KEY di Environment Variables Vercel Anda.");
+      setAppError("API Key belum dikonfigurasi. Harap masukkan VITE_GEMINI_API_KEY di Environment Variables Vercel Anda.");
       setStep('home');
       return;
     }
 
     setStep('analyzing');
+    setAppError(null);
     const base64Content = imageSource.split(',')[1];
 
     const prompt = `Analisis gambar ini dengan instruksi spesifik:
@@ -132,8 +126,12 @@ const App = () => {
         setAnalysisResult(data);
         setStep('result');
       } catch (error) {
-        if (retry < 3) setTimeout(() => callApi(retry + 1), 2000);
-        else { setStep('home'); alert("Gagal menganalisis."); }
+        if (retry < 3) {
+          setTimeout(() => callApi(retry + 1), 2000);
+        } else {
+          setStep('home');
+          setAppError("Gagal menganalisis gambar. Pastikan koneksi internet stabil dan coba beberapa saat lagi.");
+        }
       }
     };
     callApi();
@@ -150,13 +148,25 @@ const App = () => {
             </div>
             <span className="font-bold text-slate-800">HalalPartner</span>
           </div>
-          <button className="p-2 text-slate-400"><History size={20} /></button>
+          <button className="p-2 text-slate-400" onClick={() => setStep('home')} aria-label="Riwayat">
+            <History size={20} />
+          </button>
         </nav>
       )}
 
-      <main className="max-w-md mx-auto min-h-[calc(100vh-64px)]">
+      <main className="max-w-md mx-auto min-h-[calc(100vh-64px)] pb-12">
         
-        { }
+        {/* Error Banner System */}
+        {appError && (
+          <div className="mx-6 mt-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3 text-rose-800 animate-in fade-in slide-in-from-top-2 duration-300">
+            <XCircle className="text-rose-500 shrink-0 mt-0.5" size={18} />
+            <div className="text-xs space-y-1">
+              <p className="font-bold">Sistem Menolak Permintaan</p>
+              <p className="opacity-90">{appError}</p>
+            </div>
+          </div>
+        )}
+
         {step === 'home' && (
           <div className="p-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="pt-4">
@@ -165,7 +175,6 @@ const App = () => {
             </div>
 
             <div className="grid grid-cols-1 gap-4">
-              {/* Camera Option */}
               <button 
                 onClick={openCamera}
                 className="group bg-white p-6 rounded-[2rem] border-2 border-transparent hover:border-emerald-500 shadow-sm transition-all flex items-center gap-6"
@@ -179,7 +188,6 @@ const App = () => {
                 </div>
               </button>
 
-              {/* Gallery Option */}
               <button 
                 onClick={() => fileInputRef.current.click()}
                 className="group bg-white p-6 rounded-[2rem] border-2 border-transparent hover:border-blue-500 shadow-sm transition-all flex items-center gap-6"
@@ -197,7 +205,6 @@ const App = () => {
           </div>
         )}
 
-        { }
         {step === 'camera' && (
           <div className="fixed inset-0 bg-black z-50 flex flex-col">
             <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-center z-10">
@@ -223,7 +230,6 @@ const App = () => {
           </div>
         )}
 
-        { }
         {step === 'preview' && (
           <div className="p-6 space-y-6 animate-in fade-in duration-500">
             <button onClick={() => setStep('home')} className="text-slate-500 flex items-center gap-2 font-bold"><ChevronLeft size={18}/> Ganti Foto</button>
@@ -243,7 +249,6 @@ const App = () => {
           </div>
         )}
 
-        { }
         {step === 'analyzing' && (
           <div className="h-[80vh] flex flex-col items-center justify-center p-10 animate-pulse">
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mb-6">
@@ -254,13 +259,11 @@ const App = () => {
           </div>
         )}
 
-        { }
         {step === 'result' && analysisResult && (
           <div className="p-5 space-y-6 animate-in slide-in-from-bottom-8 duration-500">
             <button onClick={() => setStep('home')} className="flex items-center gap-2 text-slate-500 font-bold text-sm"><ChevronLeft size={18} /> Beranda</button>
 
             <div className="bg-white rounded-[2.5rem] shadow-xl shadow-slate-200 overflow-hidden border border-slate-100">
-              {/* Conditional Banner */}
               {analysisResult.isHalalContext ? (
                 <div className={`p-8 flex flex-col items-center text-center gap-4 ${
                   analysisResult.color === 'green' ? 'bg-emerald-600 text-white' : 
