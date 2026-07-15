@@ -5,22 +5,34 @@ import {
   Zap, History, Info, Search
 } from 'lucide-react';
 
-// Ambil API Key secara statis sesuai standar Vite
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+// Mengambil API Key dari Environment Variables dengan aman untuk menghindari error target kompilasi ES2015
+const getApiKey = () => {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      return import.meta.env.VITE_GEMINI_API_KEY || "";
+    }
+  } catch (e) {
+    // Fallback jika lingkungan kompilator tidak mendukung metadata impor statis
+  }
+  return "";
+};
+
+const apiKey = getApiKey();
 
 const App = () => {
-  const [step, setStep] = useState('home'); // home, camera, preview, analyzing, result
-  const [imageSource, setImageSource] = useState(null); // base64 image data
-  const [analysisResult, setAnalysisResult] = useState(null);
-  const [isFlashOn, setIsFlashOn] = useState(false);
-  const [cameraError, setCameraError] = useState(null);
-  const [appError, setAppError] = useState(null); // Banner error internal menggantikan alert()
+  const [step, setStep] = useState('home'); // Berpindah halaman: home, camera, preview, analyzing, result
+  const [imageSource, setImageSource] = useState(null); // Menyimpan base64 data foto
+  const [analysisResult, setAnalysisResult] = useState(null); // Menyimpan hasil JSON dari Gemini
+  const [isFlashOn, setIsFlashOn] = useState(false); // Status flash/lampu kamera (jika didukung)
+  const [cameraError, setCameraError] = useState(null); // Status error hardware kamera
+  const [appError, setAppError] = useState(null); // Notifikasi banner error dynamic di atas layar
   
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // Menghentikan aliran kamera dengan aman untuk menghemat baterai HP
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
@@ -33,6 +45,7 @@ const App = () => {
     return () => stopCamera();
   }, [stopCamera]);
 
+  // Menginisialisasi kamera belakang (environment) perangkat
   const openCamera = async () => {
     setCameraError(null);
     setAppError(null);
@@ -51,6 +64,7 @@ const App = () => {
     }, 100);
   };
 
+  // Mengambil gambar dari frame video kamera
   const handleCapture = () => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
@@ -65,6 +79,7 @@ const App = () => {
     setStep('preview');
   };
 
+  // Membaca file gambar dari galeri HP
   const handleGallery = (e) => {
     setAppError(null);
     const file = e.target.files[0];
@@ -89,32 +104,33 @@ const App = () => {
     setAppError(null);
     const base64Content = imageSource.split(',')[1];
 
+    // Prompt spesifik dalam format JSON terstruktur untuk diproses oleh Gemini 3.5 Flash
     const prompt = `Analisis gambar ini dengan instruksi spesifik:
     1. Identifikasi apakah objek ini: Makanan, Minuman, Kosmetik, Restoran, atau Produk Umum/Lainnya.
     2. Jika objek adalah Makanan, Minuman, Kosmetik, atau Restoran: 
        - Tentukan status: Halal, Muslim Friendly, atau Haram.
        - Berikan alasan berdasarkan bahan/reputasi.
-       - Berikan 2 rekomendasi alternatif.
+       - Berikan 2 rekomendasi alternatif yang halal dan populer di Jepang.
        - Set "isHalalContext": true.
     3. Jika objek BUKAN kategori di atas (misal: elektronik, otomotif, pemandangan, benda mati lainnya):
        - Berikan penjelasan/deskripsi produk secara umum saja.
        - Set "isHalalContext": false.
     
-    Gunakan format JSON: { 
+    Gunakan format JSON murni tanpa markdown pembungkus: { 
       "category": "makanan|minuman|kosmetik|restoran|umum", 
-      "productName": "", 
+      "productName": "Nama Produk Terdeteksi", 
       "isHalalContext": true|false,
       "status": "Halal|Muslim Friendly|Haram", 
       "level": "1-3", 
       "color": "green|yellow|red|blue", 
       "description": "Deskripsi umum produk jika isHalalContext false",
-      "analysis": ["poin 1", "poin 2"], 
-      "recommendations": ["opsi 1", "opsi 2"] 
+      "analysis": ["poin analisis bahan 1", "poin analisis bahan 2"], 
+      "recommendations": ["alternatif halal 1", "alternatif halal 2"] 
     }`;
 
     try {
-      // Menggunakan model gemini-2.5-flash terbaru yang didukung penuh di tahun 2026
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      // Menggunakan model Gemini terbaru tahun 2026: gemini-3.5-flash
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -142,7 +158,7 @@ const App = () => {
       setAnalysisResult(data);
       setStep('result');
     } catch (error) {
-      console.error(error);
+      console.error("Analysis error: ", error);
       setStep('home');
       setAppError(`Gagal menganalisis gambar. Detail Error: ${error.message}`);
     }
@@ -165,7 +181,7 @@ const App = () => {
       )}
 
       <main className="max-w-md mx-auto min-h-[calc(100vh-64px)] pb-12">
-        {/* Banner Notifikasi Error Dinamis */}
+        {/* Banner Dynamic Notification Error */}
         {appError && (
           <div className="mx-6 mt-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3 text-rose-800 animate-in fade-in slide-in-from-top-2 duration-300">
             <XCircle className="text-rose-500 shrink-0 mt-0.5" size={18} />
@@ -176,7 +192,7 @@ const App = () => {
           </div>
         )}
 
-        {/* Halaman Utama / Beranda */}
+        {}
         {step === 'home' && (
           <div className="p-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="pt-4 text-left">
@@ -215,7 +231,7 @@ const App = () => {
           </div>
         )}
 
-        {/* Halaman Kamera */}
+        {}
         {step === 'camera' && (
           <div className="fixed inset-0 bg-black z-50 flex flex-col">
             <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-center z-10">
@@ -241,7 +257,7 @@ const App = () => {
           </div>
         )}
 
-        {/* Halaman Preview Sebelum Analisis */}
+        {}
         {step === 'preview' && (
           <div className="p-6 space-y-6 animate-in fade-in duration-500">
             <button onClick={() => setStep('home')} className="text-slate-500 flex items-center gap-2 font-bold text-sm"><ChevronLeft size={18}/> Ganti Foto</button>
@@ -261,18 +277,18 @@ const App = () => {
           </div>
         )}
 
-        {/* Layar Loading Analisis */}
+        {}
         {step === 'analyzing' && (
           <div className="h-[80vh] flex flex-col items-center justify-center p-10 animate-pulse">
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mb-6">
               <RefreshCw className="text-emerald-600 animate-spin" size={40} />
             </div>
-            <h3 className="text-xl font-black">AI Sedang Bekerja...</h3>
-            <p className="text-slate-400 text-sm mt-2 text-center">Menghubungkan ke server Google Gemini untuk mengecek kehalalan produk.</p>
+            <h3 className="text-xl font-black">AI Gemini 3.5 Sedang Bekerja...</h3>
+            <p className="text-slate-400 text-sm mt-2 text-center">Menghubungkan ke server Google Gemini 3.5 Flash untuk mendeteksi bahan produk secara instan.</p>
           </div>
         )}
 
-        {/* Halaman Hasil Analisis */}
+        {}
         {step === 'result' && analysisResult && (
           <div className="p-5 space-y-6 animate-in slide-in-from-bottom-8 duration-500">
             <button onClick={() => setStep('home')} className="flex items-center gap-2 text-slate-500 font-bold text-sm"><ChevronLeft size={18} /> Beranda</button>
@@ -288,7 +304,7 @@ const App = () => {
                   </div>
                   <div>
                     <h2 className="text-2xl font-black">{analysisResult.status}</h2>
-                    <span className="text-[10px] font-bold uppercase tracking-widest bg-black/10 px-3 py-1 rounded-full">Level {analysisResult.level}</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest bg-black/10 px-3 py-1 rounded-full">Kategori {analysisResult.category}</span>
                   </div>
                 </div>
               ) : (
@@ -319,7 +335,7 @@ const App = () => {
                     </div>
                     <div className="space-y-3 pt-2">
                       <h4 className="text-sm font-bold flex items-center gap-2 text-left">
-                        <Star className="text-amber-400" size={16} fill="currentColor" /> Rekomendasi Halal
+                        <Star className="text-amber-400" size={16} fill="currentColor" /> Rekomendasi Alternatif Halal
                       </h4>
                       {analysisResult.recommendations.map((rec, idx) => (
                         <div key={idx} className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
@@ -332,10 +348,10 @@ const App = () => {
                 ) : (
                   <div className="space-y-4">
                     <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest border-b pb-1 text-left">Deskripsi Umum</p>
-                    <p className="text-slate-600 leading-relaxed text-sm text-left">{analysisResult.description || analysisResult.analysis[0]}</p>
+                    <p className="text-slate-600 leading-relaxed text-sm text-left">{analysisResult.description || (analysisResult.analysis && analysisResult.analysis[0])}</p>
                     <div className="bg-blue-50 p-4 rounded-2xl flex gap-3 items-start border border-blue-100 text-left">
                       <Search className="text-blue-500 mt-1 shrink-0" size={18} />
-                      <p className="text-xs text-blue-700 italic">Produk ini terdeteksi sebagai kategori umum. Tidak memerlukan analisis status kehalalan.</p>
+                      <p className="text-xs text-blue-700 italic">Produk ini terdeteksi sebagai kategori non-konsumsi umum. Tidak memerlukan analisis status kehalalan.</p>
                     </div>
                   </div>
                 )}
