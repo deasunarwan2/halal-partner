@@ -5,18 +5,8 @@ import {
   Zap, History, Info, Search
 } from 'lucide-react';
 
-// Safe wrapper to prevent ES2015 compilation target errors in local/preview environments
-const getApiKey = () => {
-  try {
-    // Vite will statically replace this exact sequence with the actual key value during production build
-    const key = import.meta.env.VITE_GEMINI_API_KEY;
-    return key || "";
-  } catch (e) {
-    return "";
-  }
-};
-
-const apiKey = getApiKey();
+// Ambil API Key secara statis sesuai standar Vite
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 const App = () => {
   const [step, setStep] = useState('home'); // home, camera, preview, analyzing, result
@@ -24,7 +14,7 @@ const App = () => {
   const [analysisResult, setAnalysisResult] = useState(null);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [cameraError, setCameraError] = useState(null);
-  const [appError, setAppError] = useState(null); // Native in-app notifications replacing alert()
+  const [appError, setAppError] = useState(null); // Banner error internal menggantikan alert()
   
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -123,7 +113,8 @@ const App = () => {
     }`;
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      // Menggunakan model gemini-2.5-flash terbaru yang didukung penuh di tahun 2026
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -174,21 +165,21 @@ const App = () => {
       )}
 
       <main className="max-w-md mx-auto min-h-[calc(100vh-64px)] pb-12">
-        {}
+        {/* Banner Notifikasi Error Dinamis */}
         {appError && (
           <div className="mx-6 mt-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3 text-rose-800 animate-in fade-in slide-in-from-top-2 duration-300">
             <XCircle className="text-rose-500 shrink-0 mt-0.5" size={18} />
-            <div className="text-xs space-y-1">
+            <div className="text-xs space-y-1 text-left">
               <p className="font-bold">Sistem Menolak Permintaan</p>
               <p className="opacity-95 leading-relaxed">{appError}</p>
             </div>
           </div>
         )}
 
-        {}
+        {/* Halaman Utama / Beranda */}
         {step === 'home' && (
           <div className="p-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="pt-4">
+            <div className="pt-4 text-left">
               <h2 className="text-3xl font-black text-slate-900 leading-tight">Halo! Apa yang ingin <span className="text-emerald-600">Anda Cek?</span></h2>
               <p className="text-slate-500 mt-2 text-sm">Pilih cara untuk memasukkan gambar produk atau restoran.</p>
             </div>
@@ -224,7 +215,7 @@ const App = () => {
           </div>
         )}
 
-        {}
+        {/* Halaman Kamera */}
         {step === 'camera' && (
           <div className="fixed inset-0 bg-black z-50 flex flex-col">
             <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-center z-10">
@@ -250,7 +241,7 @@ const App = () => {
           </div>
         )}
 
-        {}
+        {/* Halaman Preview Sebelum Analisis */}
         {step === 'preview' && (
           <div className="p-6 space-y-6 animate-in fade-in duration-500">
             <button onClick={() => setStep('home')} className="text-slate-500 flex items-center gap-2 font-bold text-sm"><ChevronLeft size={18}/> Ganti Foto</button>
@@ -270,7 +261,7 @@ const App = () => {
           </div>
         )}
 
-        {}
+        {/* Layar Loading Analisis */}
         {step === 'analyzing' && (
           <div className="h-[80vh] flex flex-col items-center justify-center p-10 animate-pulse">
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mb-6">
@@ -281,7 +272,7 @@ const App = () => {
           </div>
         )}
 
-        {}
+        {/* Halaman Hasil Analisis */}
         {step === 'result' && analysisResult && (
           <div className="p-5 space-y-6 animate-in slide-in-from-bottom-8 duration-500">
             <button onClick={() => setStep('home')} className="flex items-center gap-2 text-slate-500 font-bold text-sm"><ChevronLeft size={18} /> Beranda</button>
@@ -327,7 +318,7 @@ const App = () => {
                       ))}
                     </div>
                     <div className="space-y-3 pt-2">
-                      <h4 className="text-sm font-bold flex items-center gap-2">
+                      <h4 className="text-sm font-bold flex items-center gap-2 text-left">
                         <Star className="text-amber-400" size={16} fill="currentColor" /> Rekomendasi Halal
                       </h4>
                       {analysisResult.recommendations.map((rec, idx) => (
@@ -342,8 +333,8 @@ const App = () => {
                   <div className="space-y-4">
                     <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest border-b pb-1 text-left">Deskripsi Umum</p>
                     <p className="text-slate-600 leading-relaxed text-sm text-left">{analysisResult.description || analysisResult.analysis[0]}</p>
-                    <div className="bg-blue-50 p-4 rounded-2xl flex gap-3 items-start border border-blue-100">
-                      <Search className="text-blue-500 mt-1" size={18} />
+                    <div className="bg-blue-50 p-4 rounded-2xl flex gap-3 items-start border border-blue-100 text-left">
+                      <Search className="text-blue-500 mt-1 shrink-0" size={18} />
                       <p className="text-xs text-blue-700 italic">Produk ini terdeteksi sebagai kategori umum. Tidak memerlukan analisis status kehalalan.</p>
                     </div>
                   </div>
