@@ -5,7 +5,7 @@ import {
   Zap, History, Info, Search
 } from 'lucide-react';
 
-// Mengambil API Key dari Environment Variables dengan aman untuk menghindari error target kompilasi ES2015
+// Mengambil API Key dari Environment Variables Vite/Vercel secara aman
 const getApiKey = () => {
   try {
     if (typeof import.meta !== 'undefined' && import.meta.env) {
@@ -26,6 +26,7 @@ const App = () => {
   const [isFlashOn, setIsFlashOn] = useState(false); // Status flash/lampu kamera (jika didukung)
   const [cameraError, setCameraError] = useState(null); // Status error hardware kamera
   const [appError, setAppError] = useState(null); // Notifikasi banner error dynamic di atas layar
+  const [retryStatus, setRetryStatus] = useState(""); // Menyimpan info coba ulang di UI
   
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -102,14 +103,15 @@ const App = () => {
 
     setStep('analyzing');
     setAppError(null);
+    setRetryStatus("");
     const base64Content = imageSource.split(',')[1];
 
-    // Prompt spesifik dalam format JSON terstruktur untuk diproses oleh Gemini 3.5 Flash
+    // Prompt terstruktur untuk Gemini
     const prompt = `Analisis gambar ini dengan instruksi spesifik:
     1. Identifikasi apakah objek ini: Makanan, Minuman, Kosmetik, Restoran, atau Produk Umum/Lainnya.
     2. Jika objek adalah Makanan, Minuman, Kosmetik, atau Restoran: 
        - Tentukan status: Halal, Muslim Friendly, atau Haram.
-       - Berikan alasan berdasarkan bahan/reputasi.
+       - Berikan alasan berdasarkan bahan/reputasi secara detail.
        - Berikan 2 rekomendasi alternatif yang halal dan populer di Jepang.
        - Set "isHalalContext": true.
     3. Jika objek BUKAN kategori di atas (misal: elektronik, otomotif, pemandangan, benda mati lainnya):
@@ -128,39 +130,71 @@ const App = () => {
       "recommendations": ["alternatif halal 1", "alternatif halal 2"] 
     }`;
 
-    try {
-      // Menggunakan model Gemini terbaru tahun 2026: gemini-3.5-flash
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Content } }] }],
-          generationConfig: { responseMimeType: "application/json" }
-        })
-      });
+    // Rantai model cadangan dari yang paling stabil kuotanya hingga model alternatif
+    const models = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+    let finalData = null;
+    let lastErrorMsg = "";
 
-      if (!response.ok) {
-        const errBody = await response.text();
-        let parsedErr;
+    // Loop mencoba satu per satu model dalam daftar
+    for (let mIdx = 0; mIdx < models.length; mIdx++) {
+      const currentModel = models[mIdx];
+      let attempts = 3; // Jumlah coba ulang per model jika terkena limit atau overload
+      let delay = 1000; // Jeda awal 1 detik sebelum mencoba lagi
+
+      while (attempts > 0) {
         try {
-          parsedErr = JSON.parse(errBody);
-        } catch (e) {
-          parsedErr = null;
+          if (mIdx > 0 || attempts < 3) {
+            setRetryStatus(`Menghubungkan ulang via jalur alternatif (${currentModel})...`);
+          }
+
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Content } }] }],
+              generationConfig: { responseMimeType: "application/json" }
+            })
+          });
+
+          // Jika Google mengembalikan status overload (503) atau rate limit (429)
+          if (response.status === 503 || response.status === 429) {
+            console.warn(`Model ${currentModel} sibuk (Status: ${response.status}). Mencoba lagi dalam ${delay}ms...`);
+            setRetryStatus(`Server Google sibuk. Mencoba kembali dalam ${delay/1000} detik...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            attempts--;
+            delay *= 2; // Naikkan jeda waktu secara eksponensial (1s -> 2s -> 4s)
+            continue;
+          }
+
+          if (!response.ok) {
+            const errBody = await response.text();
+            let parsedErr;
+            try { parsedErr = JSON.parse(errBody); } catch (e) { parsedErr = null; }
+            const detailMessage = parsedErr?.error?.message || response.statusText || "Error tidak diketahui";
+            throw new Error(`Google API (${currentModel}): ${detailMessage} (Code: ${response.status})`);
+          }
+
+          const result = await response.json();
+          const rawText = result.candidates[0].content.parts[0].text;
+          finalData = JSON.parse(rawText);
+          break; // Sukses! Keluar dari loop pencarian model
+
+        } catch (error) {
+          console.error(`Gagal menggunakan model ${currentModel}:`, error);
+          lastErrorMsg = error.message;
+          break; // Jika error tipe lain, langsung coba ganti model berikutnya
         }
-        
-        const detailMessage = parsedErr?.error?.message || response.statusText || "Error tidak diketahui";
-        throw new Error(`Google API: ${detailMessage} (Code: ${response.status})`);
       }
 
-      const result = await response.json();
-      const rawText = result.candidates[0].content.parts[0].text;
-      const data = JSON.parse(rawText);
-      setAnalysisResult(data);
+      if (finalData) break; // Keluar dari loop utama jika data berhasil didapatkan
+    }
+
+    if (finalData) {
+      setAnalysisResult(finalData);
       setStep('result');
-    } catch (error) {
-      console.error("Analysis error: ", error);
+    } else {
       setStep('home');
-      setAppError(`Gagal menganalisis gambar. Detail Error: ${error.message}`);
+      setAppError(`Gagal menganalisis gambar. Server Google sedang penuh di semua jalur cadangan. Silakan coba sesaat lagi.\nDetail Terakhir: ${lastErrorMsg}`);
     }
   };
 
@@ -187,12 +221,11 @@ const App = () => {
             <XCircle className="text-rose-500 shrink-0 mt-0.5" size={18} />
             <div className="text-xs space-y-1 text-left">
               <p className="font-bold">Sistem Menolak Permintaan</p>
-              <p className="opacity-95 leading-relaxed">{appError}</p>
+              <p className="opacity-95 leading-relaxed whitespace-pre-wrap">{appError}</p>
             </div>
           </div>
         )}
 
-        {}
         {step === 'home' && (
           <div className="p-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="pt-4 text-left">
@@ -231,7 +264,6 @@ const App = () => {
           </div>
         )}
 
-        {}
         {step === 'camera' && (
           <div className="fixed inset-0 bg-black z-50 flex flex-col">
             <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-center z-10">
@@ -257,7 +289,6 @@ const App = () => {
           </div>
         )}
 
-        {}
         {step === 'preview' && (
           <div className="p-6 space-y-6 animate-in fade-in duration-500">
             <button onClick={() => setStep('home')} className="text-slate-500 flex items-center gap-2 font-bold text-sm"><ChevronLeft size={18}/> Ganti Foto</button>
@@ -277,18 +308,21 @@ const App = () => {
           </div>
         )}
 
-        {}
         {step === 'analyzing' && (
-          <div className="h-[80vh] flex flex-col items-center justify-center p-10 animate-pulse">
+          <div className="h-[80vh] flex flex-col items-center justify-center p-10 animate-pulse text-center">
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mb-6">
               <RefreshCw className="text-emerald-600 animate-spin" size={40} />
             </div>
-            <h3 className="text-xl font-black">AI Gemini 3.5 Sedang Bekerja...</h3>
-            <p className="text-slate-400 text-sm mt-2 text-center">Menghubungkan ke server Google Gemini 3.5 Flash untuk mendeteksi bahan produk secara instan.</p>
+            <h3 className="text-xl font-black">AI Gemini Sedang Bekerja...</h3>
+            <p className="text-slate-400 text-sm mt-2 max-w-xs">Menghubungkan ke server Google AI Studio untuk mendeteksi komposisi bahan produk.</p>
+            {retryStatus && (
+              <div className="mt-6 px-4 py-2 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800 font-bold animate-bounce">
+                ⚠️ {retryStatus}
+              </div>
+            )}
           </div>
         )}
 
-        {}
         {step === 'result' && analysisResult && (
           <div className="p-5 space-y-6 animate-in slide-in-from-bottom-8 duration-500">
             <button onClick={() => setStep('home')} className="flex items-center gap-2 text-slate-500 font-bold text-sm"><ChevronLeft size={18} /> Beranda</button>
@@ -365,6 +399,7 @@ const App = () => {
         )}
       </main>
 
+      {}
       <style>{`
         @keyframes scan {
           0% { top: 0%; opacity: 0; }
