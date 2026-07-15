@@ -2,19 +2,29 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Camera, Image as ImageIcon, ShieldCheck, AlertTriangle, 
   XCircle, RefreshCw, Star, ArrowRight, ChevronLeft, 
-  Zap, ZapOff, Scan, History, LayoutGrid, Info, Search
+  Zap, History, Info, Search
 } from 'lucide-react';
 
-// Mengambil API Key secara langsung agar dibaca sempurna oleh compiler Vite/Vercel
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+// Safe wrapper to prevent ES2015 compilation target errors in local/preview environments
+const getApiKey = () => {
+  try {
+    // Vite will statically replace this exact sequence with the actual key value during production build
+    const key = import.meta.env.VITE_GEMINI_API_KEY;
+    return key || "";
+  } catch (e) {
+    return "";
+  }
+};
+
+const apiKey = getApiKey();
 
 const App = () => {
-  const [step, setStep] = useState('home'); // home, preview, analyzing, result
-  const [imageSource, setImageSource] = useState(null); // base64 image
+  const [step, setStep] = useState('home'); // home, camera, preview, analyzing, result
+  const [imageSource, setImageSource] = useState(null); // base64 image data
   const [analysisResult, setAnalysisResult] = useState(null);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [cameraError, setCameraError] = useState(null);
-  const [appError, setAppError] = useState(null); // Pengganti alert()
+  const [appError, setAppError] = useState(null); // Native in-app notifications replacing alert()
   
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -45,7 +55,7 @@ const App = () => {
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
       } catch (err) {
-        setCameraError("Izin kamera ditolak atau tidak tersedia.");
+        setCameraError("Izin kamera ditolak atau kamera tidak ditemukan pada perangkat Anda.");
         setTimeout(() => setStep('home'), 3000);
       }
     }, 100);
@@ -54,6 +64,7 @@ const App = () => {
   const handleCapture = () => {
     const canvas = canvasRef.current;
     const video = videoRef.current;
+    if (!video || !canvas) return;
     const context = canvas.getContext('2d');
     canvas.width = 800;
     canvas.height = 600;
@@ -111,35 +122,43 @@ const App = () => {
       "recommendations": ["opsi 1", "opsi 2"] 
     }`;
 
-    const callApi = async (retry = 0) => {
-      try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Content } }] }],
-            generationConfig: { responseMimeType: "application/json" }
-          })
-        });
-        const result = await response.json();
-        const data = JSON.parse(result.candidates[0].content.parts[0].text);
-        setAnalysisResult(data);
-        setStep('result');
-      } catch (error) {
-        if (retry < 3) {
-          setTimeout(() => callApi(retry + 1), 2000);
-        } else {
-          setStep('home');
-          setAppError("Gagal menganalisis gambar. Pastikan koneksi internet stabil dan coba beberapa saat lagi.");
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Content } }] }],
+          generationConfig: { responseMimeType: "application/json" }
+        })
+      });
+
+      if (!response.ok) {
+        const errBody = await response.text();
+        let parsedErr;
+        try {
+          parsedErr = JSON.parse(errBody);
+        } catch (e) {
+          parsedErr = null;
         }
+        
+        const detailMessage = parsedErr?.error?.message || response.statusText || "Error tidak diketahui";
+        throw new Error(`Google API: ${detailMessage} (Code: ${response.status})`);
       }
-    };
-    callApi();
+
+      const result = await response.json();
+      const rawText = result.candidates[0].content.parts[0].text;
+      const data = JSON.parse(rawText);
+      setAnalysisResult(data);
+      setStep('result');
+    } catch (error) {
+      console.error(error);
+      setStep('home');
+      setAppError(`Gagal menganalisis gambar. Detail Error: ${error.message}`);
+    }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-emerald-100 overflow-x-hidden">
-      {/* Header */}
       {step !== 'camera' && (
         <nav className="bg-white/80 backdrop-blur-md border-b border-slate-200 p-4 sticky top-0 z-40 flex justify-between items-center h-16">
           <div className="flex items-center gap-2">
@@ -155,18 +174,18 @@ const App = () => {
       )}
 
       <main className="max-w-md mx-auto min-h-[calc(100vh-64px)] pb-12">
-        
-        {/* Error Banner System */}
+        {}
         {appError && (
           <div className="mx-6 mt-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3 text-rose-800 animate-in fade-in slide-in-from-top-2 duration-300">
             <XCircle className="text-rose-500 shrink-0 mt-0.5" size={18} />
             <div className="text-xs space-y-1">
               <p className="font-bold">Sistem Menolak Permintaan</p>
-              <p className="opacity-90">{appError}</p>
+              <p className="opacity-95 leading-relaxed">{appError}</p>
             </div>
           </div>
         )}
 
+        {}
         {step === 'home' && (
           <div className="p-6 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="pt-4">
@@ -205,6 +224,7 @@ const App = () => {
           </div>
         )}
 
+        {}
         {step === 'camera' && (
           <div className="fixed inset-0 bg-black z-50 flex flex-col">
             <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-center z-10">
@@ -230,14 +250,15 @@ const App = () => {
           </div>
         )}
 
+        {}
         {step === 'preview' && (
           <div className="p-6 space-y-6 animate-in fade-in duration-500">
-            <button onClick={() => setStep('home')} className="text-slate-500 flex items-center gap-2 font-bold"><ChevronLeft size={18}/> Ganti Foto</button>
+            <button onClick={() => setStep('home')} className="text-slate-500 flex items-center gap-2 font-bold text-sm"><ChevronLeft size={18}/> Ganti Foto</button>
             <div className="bg-white p-4 rounded-[2.5rem] shadow-sm border border-slate-200">
               <img src={imageSource} alt="Preview" className="w-full h-64 object-cover rounded-[2rem]" />
               <div className="p-4 text-center space-y-4">
                 <h3 className="font-bold text-xl">Foto Siap Menganalisis</h3>
-                <p className="text-sm text-slate-400">Pastikan gambar terlihat jelas untuk hasil yang akurat.</p>
+                <p className="text-sm text-slate-400">Pastikan gambar terlihat jelas untuk hasil yang maksimal.</p>
                 <button 
                   onClick={startAnalysis}
                   className="w-full bg-emerald-600 text-white py-5 rounded-2xl font-black text-lg shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
@@ -249,16 +270,18 @@ const App = () => {
           </div>
         )}
 
+        {}
         {step === 'analyzing' && (
           <div className="h-[80vh] flex flex-col items-center justify-center p-10 animate-pulse">
             <div className="w-24 h-24 bg-emerald-50 rounded-full flex items-center justify-center mb-6">
               <RefreshCw className="text-emerald-600 animate-spin" size={40} />
             </div>
             <h3 className="text-xl font-black">AI Sedang Bekerja...</h3>
-            <p className="text-slate-400 text-sm mt-2 text-center">Mengidentifikasi kategori produk dan memeriksa basis data Jepang.</p>
+            <p className="text-slate-400 text-sm mt-2 text-center">Menghubungkan ke server Google Gemini untuk mengecek kehalalan produk.</p>
           </div>
         )}
 
+        {}
         {step === 'result' && analysisResult && (
           <div className="p-5 space-y-6 animate-in slide-in-from-bottom-8 duration-500">
             <button onClick={() => setStep('home')} className="flex items-center gap-2 text-slate-500 font-bold text-sm"><ChevronLeft size={18} /> Beranda</button>
